@@ -1,0 +1,17 @@
+# never commit keys: the API key lives in your shell (export META_API_KEY=...) or in .env
+.env
+*.key
+
+# python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# pre-lab prototypes kept locally, not part of the submission
+_old/
+
+# screenshots / scratch
+*.png
+*.tmp_rename

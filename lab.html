@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neuro Lab</title>
+<style>
+  :root { --bg:#0b0d12; --fg:#e8eaf0; --dim:#8a90a0; --acc:#ffd23f; --red:#ff4d4d; --green:#3ddc84; --blue:#5aa9ff; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; overflow:hidden; }
+  #c { display:block; width:100%; height:100%; }
+  .hud { position:absolute; pointer-events:none; }
+  #top { left:16px; top:14px; max-width:46vw; }
+  #top h1 { margin:0 0 2px; font-size:17px; letter-spacing:.3px; }
+  #top .sub { color:var(--dim); font-size:12px; }
+  #status { margin-top:6px; font-size:12px; }
+  #status b { color:var(--acc); }
+  #panel { right:16px; top:14px; pointer-events:auto; background:rgba(14,17,24,.82); border:1px solid #23283a; border-radius:10px; padding:10px 12px; width:250px; backdrop-filter: blur(6px); }
+  #panel h2 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); }
+  .row { display:flex; gap:6px; margin-bottom:6px; align-items:center; }
+  button { background:#1b2030; color:var(--fg); border:1px solid #2d3448; border-radius:7px; padding:6px 9px; cursor:pointer; font:inherit; font-size:13px; }
+  button:hover { background:#242b3e; }
+  button.red { border-color:#6b2222; color:#ff9a9a; }  button.green { border-color:#1f5c3a; color:#9af0c0; }
+  button.yellow { border-color:#6b5a1a; color:#ffe58a; } button.blue { border-color:#1f3f6b; color:#a9d0ff; }
+  select, input[type=range] { width:100%; }
+  select, input[type=text] { background:#1b2030; color:var(--fg); border:1px solid #2d3448; border-radius:7px; padding:6px; font:inherit; }
+  input[type=text] { width:100%; box-sizing:border-box; border-color:#3d4a2d; }
+  input[type=text]:focus { outline:none; border-color:var(--acc); }
+  #log { left:16px; bottom:14px; width:min(620px, 60vw); font-size:12px; color:#c9cdd8; }
+  #log div { background:rgba(14,17,24,.7); padding:3px 8px; border-left:3px solid #2d3448; margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #log div.agent { border-left-color:var(--acc); }  #log div.lab { border-left-color:var(--blue); }  #log div.user { border-left-color:var(--green); color:#d8f5e4; }
+  #help { right:16px; bottom:14px; font-size:11px; color:var(--dim); text-align:right; }
+  #drugs { font-size:12px; color:#ffb3b3; min-height:16px; margin-bottom:6px; }
+  #vr { position:absolute; left:50%; transform:translateX(-50%); bottom:16px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="top" class="hud">
+  <h1>Metaverse Neuro Lab</h1>
+  <div class="sub">Maxime — a 139,255-neuron fly, her body, and the drugs you drop on her</div>
+  <div id="status">connecting…</div>
+</div>
+<div id="panel" class="hud">
+  <h2>Experiment</h2>
+  <div id="drugs">no drugs on board</div>
+  <div class="row"><select id="drug"></select></div>
+  <div class="row"><input id="amount" type="range" min="0.05" max="1.5" step="0.05" value="0.5"><span id="amt" style="width:38px;text-align:right">0.50</span></div>
+  <div class="row"><button id="bDose" class="blue" style="flex:1">Dose</button><button id="bWash" style="flex:1">Washout</button></div>
+  <div class="row"><button id="bScr" class="red" style="flex:1">Scramble</button><button id="bRes" class="green" style="flex:1">Restore</button></div>
+  <div class="row"><button id="bBan" class="yellow" style="flex:1">New banana</button><button id="bTrial" style="flex:1">Run trial</button></div>
+  <div class="row" id="pausedRow" style="display:none"><button id="bResume" class="yellow" style="flex:1">⏸ simulation paused — resume</button></div>
+  <h2 style="margin-top:10px">Talk to the experimenter</h2>
+  <div class="row"><input id="chat" type="text" placeholder="e.g. dose-response of caffeine ↵" autocomplete="off"></div>
+  <div id="chatHint" style="font-size:11px;color:var(--dim)">needs <code>python3 agent.py --chat</code> running</div>
+</div>
+<div id="log" class="hud"></div>
+<div id="help" class="hud">drag to orbit · scroll to zoom · drag the banana · click vials and buttons on the table</div>
+<script type="importmap">{ "imports": { "three": "./vendor/three/three.module.js", "three/addons/": "./vendor/three/addons/" } }</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+
+// ------------------------------------------------------------------ constants
+const U = 1 / 20;                 // python arena units -> metres (±10 -> ±0.5 m)
+const TABLE_Y = 0.75, ARENA = 1.0, ARENA_H = 0.26;
+const WS_URL = `ws://${location.hostname || 'localhost'}:8765`;
+const REGION_COLOR = { sens_L:0x5aa9ff, sens_R:0x5aa9ff, central:0xd8dde8, motor_L:0xff6b6b, motor_R:0xff6b6b };
+
+// ------------------------------------------------------------------ renderer / scene
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.xr.enabled = true;
+document.body.appendChild(VRButton.createButton(renderer)).id = 'vr';
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0d12);
+scene.fog = new THREE.Fog(0x0b0d12, 4, 9);
+const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.02, 40);
+camera.position.set(-0.75, 1.45, 1.75);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0.05, 0.98, -0.1); controls.maxPolarAngle = Math.PI*0.49; controls.minDistance = 0.4; controls.maxDistance = 4; controls.enableDamping = true;
+
+// lights
+scene.add(new THREE.HemisphereLight(0xcfd8ff, 0x1a1a22, 0.55));
+const key = new THREE.DirectionalLight(0xffffff, 1.4); key.position.set(1.5, 3.2, 1.0); key.castShadow = true;
+key.shadow.mapSize.set(1024,1024); key.shadow.camera.left=-2; key.shadow.camera.right=2; key.shadow.camera.top=2; key.shadow.camera.bottom=-2; key.shadow.camera.near=0.5; key.shadow.camera.far=8;
+scene.add(key);
+const fill = new THREE.PointLight(0xffe2b0, 8, 6); fill.position.set(-1.2, 2.2, -0.6); scene.add(fill);
+
+// ------------------------------------------------------------------ the room
+const mat = (c, o={}) => new THREE.MeshStandardMaterial(Object.assign({ color:c, roughness:0.85, metalness:0.05 }, o));
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(7,7), mat(0x2a2d36, { roughness:0.9 }));
+floor.rotation.x = -Math.PI/2; floor.receiveShadow = true; scene.add(floor);
+const grid = new THREE.GridHelper(7, 14, 0x3a3f4d, 0x30343f); grid.position.y = 0.002; scene.add(grid);
+const wallMat = mat(0x3a3e4a);
+const back = new THREE.Mesh(new THREE.PlaneGeometry(7,3), wallMat); back.position.set(0,1.5,-2.2); back.receiveShadow = true; scene.add(back);
+const left = new THREE.Mesh(new THREE.PlaneGeometry(4.4,3), wallMat); left.position.set(-3.5,1.5,0); left.rotation.y = Math.PI/2; scene.add(left);
+const right = left.clone(); right.position.x = 3.5; right.rotation.y = -Math.PI/2; scene.add(right);
+for (const x of [-1.2, 1.2]) { const lamp = new THREE.Mesh(new THREE.BoxGeometry(1.2,0.03,0.4), new THREE.MeshStandardMaterial({ color:0xffffff, emissive:0xfff6e0, emissiveIntensity:1.2 })); lamp.position.set(x, 2.98, -0.2); scene.add(lamp); }
+
+// table
+const table = new THREE.Group();
+const top = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.05, 1.1), mat(0x8a6a4a, { roughness:0.6 })); top.position.y = TABLE_Y - 0.025; top.castShadow = top.receiveShadow = true; table.add(top);
+for (const [x,z] of [[-0.92,-0.48],[0.92,-0.48],[-0.92,0.48],[0.92,0.48]]) { const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, TABLE_Y-0.05, 0.06), mat(0x55473a)); leg.position.set(x, (TABLE_Y-0.05)/2, z); leg.castShadow = true; table.add(leg); }
+scene.add(table);
+
+// ------------------------------------------------------------------ arena (glass box)
+const arena = new THREE.Group(); arena.position.set(0.15, TABLE_Y, 0.05); scene.add(arena);
+const arenaFloor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA, ARENA), mat(0xfdf6e3, { roughness:0.95 }));
+arenaFloor.rotation.x = -Math.PI/2; arenaFloor.position.y = 0.002; arenaFloor.receiveShadow = true; arena.add(arenaFloor);
+const glass = new THREE.Mesh(new THREE.BoxGeometry(ARENA, ARENA_H, ARENA), new THREE.MeshPhysicalMaterial({ color:0xdde8ff, transmission:0.9, roughness:0.08, thickness:0.01, transparent:true, opacity:0.35, side:THREE.DoubleSide, depthWrite:false }));
+glass.position.y = ARENA_H/2; arena.add(glass);
+arena.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(ARENA, ARENA_H, ARENA)), new THREE.LineBasicMaterial({ color:0x9fb3d9 })).translateY(ARENA_H/2));
+const sign = makeLabel("MAXIME'S ARENA  ·  20 × 20 units", 0.42, 0.05, '#fdf6e3', '#4a4a4a', 44); sign.position.set(0, 0.003, ARENA/2 + 0.04); sign.rotation.x = -Math.PI/2; arena.add(sign);
+
+// banana
+const banana = new THREE.Group();
+const bOuter = new THREE.Mesh(new THREE.CylinderGeometry(0.9*U, 0.9*U, 0.006, 32), new THREE.MeshStandardMaterial({ color:0xffd23f, emissive:0x6a5000, emissiveIntensity:0.4, transparent:true, opacity:0.8 }));
+bOuter.position.y = 0.004; banana.add(bOuter);
+const bCore = new THREE.Mesh(new THREE.SphereGeometry(0.02, 20, 14), mat(0xe0a800, { roughness:0.4 })); bCore.position.y = 0.02; bCore.castShadow = true; banana.add(bCore);
+banana.userData.pickable = 'banana'; bOuter.userData.pickable = bCore.userData.pickable = 'banana';
+arena.add(banana);
+
+// trail
+const TRAIL = 300;
+const trailGeo = new THREE.BufferGeometry(); trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL*3), 3)); trailGeo.setDrawRange(0, 0);
+const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color:0x9a9fae, transparent:true, opacity:0.6 })); trail.position.y = 0.004; arena.add(trail);
+let trailPts = [];
+
+// the fly
+const fly = new THREE.Group(); arena.add(fly);
+const S = 1.6 * U;      // fly drawn a little larger than true scale so it reads from across the room
+const brown = mat(0x5c3317, { roughness:0.6 }), dark = mat(0x2f1b0c);
+const abdomen = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), mat(0x8b4513, { roughness:0.6 })); abdomen.scale.set(0.42*S, 0.26*S, 0.26*S); abdomen.position.set(-0.5*S, 0.2*S, 0); abdomen.castShadow = true; fly.add(abdomen);
+const thorax = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), brown); thorax.scale.set(0.32*S, 0.24*S, 0.24*S); thorax.position.set(0, 0.22*S, 0); thorax.castShadow = true; fly.add(thorax);
+const head = new THREE.Mesh(new THREE.SphereGeometry(0.22*S, 16, 12), dark); head.position.set(0.45*S, 0.22*S, 0); fly.add(head);
+for (const s of [-1,1]) { const eye = new THREE.Mesh(new THREE.SphereGeometry(0.12*S, 12, 10), new THREE.MeshStandardMaterial({ color:0xe53935, emissive:0x550000 })); eye.position.set(0.52*S, 0.26*S, s*0.14*S); fly.add(eye); }
+const wingMat = new THREE.MeshStandardMaterial({ color:0xcfd8ff, transparent:true, opacity:0.35, side:THREE.DoubleSide, roughness:0.3 });
+const wings = [];
+for (const s of [-1,1]) { const w = new THREE.Mesh(new THREE.CircleGeometry(0.5*S, 24), wingMat); w.scale.set(1, 0.35, 1); w.rotation.x = -Math.PI/2; w.position.set(-0.1*S, 0.36*S, s*0.3*S); w.rotation.z = s*0.6; fly.add(w); wings.push(w); }
+const legGeo = new THREE.BufferGeometry(); legGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6*3*2*3), 3));
+const legs = new THREE.LineSegments(legGeo, new THREE.LineBasicMaterial({ color:0x111111 })); fly.add(legs);
+let legPhase = 0;
+
+// ------------------------------------------------------------------ the brain hologram
+const brainGroup = new THREE.Group(); brainGroup.position.set(0.15, TABLE_Y + 0.72, 0.05); scene.add(brainGroup);
+let brainPts = null, brainIntensity = null, brainBase = null, brainN = 0, brainRegionOf = [];
+const halo = new THREE.Mesh(new THREE.SphereGeometry(0.33, 32, 24), new THREE.MeshBasicMaterial({ color:0x6a8cff, transparent:true, opacity:0.05, side:THREE.BackSide })); brainGroup.add(halo);
+const brainLabel = makeLabel("Maxime's brain · 139,255 neurons · live spikes", 0.4, 0.028, 'rgba(0,0,0,0)', '#cfd8ff', 30); brainLabel.position.set(0.15, TABLE_Y + 0.33, 0.05); scene.add(brainLabel);
+function buildBrain(sample) {
+  if (brainPts) brainGroup.remove(brainPts);
+  brainN = sample.size; const pos = new Float32Array(brainN*3), col = new Float32Array(brainN*3);
+  brainIntensity = new Float32Array(brainN); brainBase = new Float32Array(brainN*3); brainRegionOf = [];
+  // lobes: (centre, radii) per region in metres
+  const lobes = { sens_L:[[-0.14,0.02,0.18],[0.07,0.05,0.06]], sens_R:[[0.14,0.02,0.18],[0.07,0.05,0.06]],
+                  central:[[0,0.04,0],[0.22,0.15,0.17]], motor_L:[[-0.12,-0.12,-0.14],[0.08,0.06,0.07]], motor_R:[[0.12,-0.12,-0.14],[0.08,0.06,0.07]] };
+  let i = 0;
+  for (const [name, cnt] of sample.bands) {
+    const [c, r] = lobes[name] || lobes.central, color = new THREE.Color(REGION_COLOR[name] || 0xffffff);
+    for (let k = 0; k < cnt; k++, i++) {
+      let x, y, z; do { x = Math.random()*2-1; y = Math.random()*2-1; z = Math.random()*2-1; } while (x*x+y*y+z*z > 1);
+      pos[i*3] = c[0] + x*r[0]; pos[i*3+1] = c[1] + y*r[1]; pos[i*3+2] = c[2] + z*r[2];
+      brainBase[i*3] = color.r*0.35; brainBase[i*3+1] = color.g*0.35; brainBase[i*3+2] = color.b*0.35;
+      brainRegionOf.push(name);
+    }
+  }
+  col.set(brainBase);
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  brainPts = new THREE.Points(g, new THREE.PointsMaterial({ size:0.011, vertexColors:true, transparent:true, opacity:0.95, blending:THREE.AdditiveBlending, depthWrite:false }));
+  brainGroup.add(brainPts);
+}
+function flashNeurons(idx) { if (!brainIntensity) return; for (const i of idx) if (i < brainN) brainIntensity[i] = 1.0; }
+function updateBrain(dt, scrambled) {
+  if (!brainPts) return;
+  const col = brainPts.geometry.attributes.color.array, decay = Math.exp(-dt / 0.12);
+  for (let i = 0; i < brainN; i++) {
+    const a = brainIntensity[i] *= decay, j = i*3;
+    const br = scrambled ? 0.45 : 0, bg = scrambled ? 0.0 : 0;   // red tint when scrambled
+    col[j] = Math.min(1, brainBase[j] + br + a*(1 - brainBase[j])); col[j+1] = Math.min(1, brainBase[j+1]*(scrambled?0.4:1) + a); col[j+2] = Math.min(1, brainBase[j+2]*(scrambled?0.4:1) + a);
+  }
+  brainPts.geometry.attributes.color.needsUpdate = true;
+  brainGroup.rotation.y += dt * 0.15;
+  halo.material.color.set(scrambled ? 0xff5a5a : 0x6a8cff);
+}
+
+// ------------------------------------------------------------------ wall screen
+const scrCanvas = document.createElement('canvas'); scrCanvas.width = 1024; scrCanvas.height = 576;
+const scr = scrCanvas.getContext('2d');
+const scrTex = new THREE.CanvasTexture(scrCanvas); scrTex.colorSpace = THREE.SRGBColorSpace;
+const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.0125), new THREE.MeshBasicMaterial({ map:scrTex }));
+screen.position.set(0, 1.62, -2.18); scene.add(screen);
+const bezel = new THREE.Mesh(new THREE.PlaneGeometry(1.86, 1.07), mat(0x11131a)); bezel.position.set(0, 1.62, -2.185); scene.add(bezel);
+const logLines = [];
+function drawScreen(st) {
+  const W = scrCanvas.width, H = scrCanvas.height;
+  scr.fillStyle = '#0e1118'; scr.fillRect(0,0,W,H);
+  scr.fillStyle = '#e8eaf0'; scr.font = 'bold 30px system-ui, sans-serif'; scr.textBaseline = 'top';
+  scr.fillText('LAB MONITOR  ·  subject: ' + (hello?.name || 'Maxime'), 28, 22);
+  scr.font = '20px system-ui, sans-serif'; scr.fillStyle = '#8a90a0';
+  scr.fillText(connected ? (st ? `${mode.toUpperCase()}   step ${st.t}   ${st.sps} steps/s   bananas ${st.caught}` : 'connected') : 'waiting for server…', 28, 62);
+  if (st) {
+    // firing bars
+    const names = ['sens_L','sens_R','central','motor_L','motor_R'];
+    const x0 = 28, y0 = 118, bw = 78, bh = 150, gap = 22;
+    scr.font = '18px system-ui, sans-serif';
+    names.forEach((n, i) => {
+      const v = Math.min(1, (st.rates[n] || 0) / 0.15), x = x0 + i*(bw+gap);
+      scr.fillStyle = '#1b2030'; scr.fillRect(x, y0, bw, bh);
+      scr.fillStyle = n.startsWith('sens') ? '#5aa9ff' : n.startsWith('motor') ? '#ff6b6b' : '#d8dde8';
+      scr.fillRect(x, y0 + bh*(1-v), bw, bh*v);
+      scr.fillStyle = '#c9cdd8'; scr.textAlign = 'center'; scr.fillText(n, x+bw/2, y0+bh+6); scr.fillText(`${(100*(st.rates[n]||0)).toFixed(1)}%`, x+bw/2, y0-24); scr.textAlign = 'left';
+    });
+    // status column
+    let y = 118; const xs = 560;
+    scr.font = 'bold 20px system-ui, sans-serif'; scr.fillStyle = st.scrambled ? '#ff5a5a' : '#3ddc84';
+    scr.fillText(st.scrambled ? 'SYNAPSES SCRAMBLED' : 'synapses intact', xs, y); y += 32;
+    scr.font = '19px system-ui, sans-serif'; scr.fillStyle = '#e8eaf0';
+    scr.fillText(`firing ${(100*st.rates.all).toFixed(2)}% of ${(hello?.n||139255).toLocaleString()} neurons`, xs, y); y += 26;
+    scr.fillText(`forward ${st.motor.forward.toFixed(2)}   turn ${st.motor.turn>=0?'+':''}${st.motor.turn.toFixed(2)}   dist ${st.dist.toFixed(1)}`, xs, y); y += 26;
+    const drugs = Object.entries(st.drugs || {});
+    scr.fillStyle = drugs.length ? '#ffb3b3' : '#8a90a0';
+    scr.fillText(drugs.length ? 'on board: ' + drugs.map(([k,v]) => `${k} ${v.toFixed(2)}`).join(', ') : 'no drugs on board', xs, y); y += 26;
+    if (st.trial) { scr.fillStyle = '#ffd23f'; scr.fillText(`trial "${st.trial.label}"  ${Math.round(100*st.trial.progress)}%`, xs, y); scr.fillStyle = '#2a2f40'; scr.fillRect(xs, y+26, 420, 10); scr.fillStyle = '#ffd23f'; scr.fillRect(xs, y+26, 420*st.trial.progress, 10); }
+    // thought
+    scr.fillStyle = '#ffd23f'; scr.font = 'italic 20px system-ui, sans-serif';
+    wrapText(`“${st.thought || ''}”`, 28, 330, W-56, 26, 2);
+  }
+  // log
+  scr.fillStyle = '#2a2f40'; scr.fillRect(28, 392, W-56, 1);
+  scr.font = '18px ui-monospace, Menlo, monospace';
+  logLines.slice(-6).forEach((l, i) => { scr.fillStyle = l.source === 'agent' ? '#ffd23f' : l.source === 'lab' ? '#5aa9ff' : l.source === 'user' ? '#9af0c0' : '#c9cdd8'; scr.fillText((l.source === 'agent' ? '> ' : l.source === 'user' ? 'you: ' : '  ') + l.text.slice(0, 92), 28, 404 + i*27); });
+  scrTex.needsUpdate = true;
+}
+function wrapText(text, x, y, maxW, lh, maxLines) {
+  const words = text.split(' '); let line = '', n = 0;
+  for (const w of words) { const t = line + w + ' '; if (scr.measureText(t).width > maxW && line) { scr.fillText(line, x, y); y += lh; line = w + ' '; if (++n >= maxLines) return; } else line = t; }
+  scr.fillText(line, x, y);
+}
+
+// ------------------------------------------------------------------ vials and buttons on the table
+const pickables = [];
+function makeLabel(text, w, h, bg, fg, size=48) {
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = Math.round(512*h/w);
+  const cx = cv.getContext('2d'); cx.fillStyle = bg; cx.fillRect(0,0,cv.width,cv.height);
+  cx.fillStyle = fg; cx.font = `bold ${size}px system-ui, sans-serif`;
+  while (size > 10 && cx.measureText(text).width > cv.width * 0.94) { size -= 2; cx.font = `bold ${size}px system-ui, sans-serif`; }   // auto-fit
+  cx.textAlign = 'center'; cx.textBaseline = 'middle'; cx.fillText(text, cv.width/2, cv.height/2);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map:t, transparent:true }));
+}
+const VIAL_COLORS = { picrotoxin:0xff8c42, ttx:0x3a3f5c, tetanus_toxin:0x8e44ad, caffeine:0x6b3e1e, isoflurane:0x5ad1ff, ethanol:0xffe58a, nicotine:0x9acd32 };
+const shelf = new THREE.Group(); shelf.position.set(-0.72, TABLE_Y, -0.3); scene.add(shelf);
+function buildShelf(drugs) {
+  while (shelf.children.length) shelf.remove(shelf.children[0]);
+  for (let i = pickables.length - 1; i >= 0; i--) if (pickables[i].userData.pickable === 'vial') pickables.splice(i, 1);   // no duplicates on reconnect
+  const names = Object.keys(drugs); const n = names.length;
+  const board = new THREE.Mesh(new THREE.BoxGeometry(0.1 + n*0.075, 0.01, 0.16), mat(0x2a2f3a)); board.position.set((n-1)*0.075/2, 0.005, 0); shelf.add(board);
+  names.forEach((name, i) => {
+    const vial = new THREE.Group(); vial.position.set(i*0.075, 0.01, 0);
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.08, 18), new THREE.MeshPhysicalMaterial({ color:VIAL_COLORS[name] || 0xffffff, transmission:0.5, roughness:0.2, transparent:true, opacity:0.85 }));
+    body.position.y = 0.04; body.castShadow = true; vial.add(body);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.015, 18), mat(0x222222)); cap.position.y = 0.0875; vial.add(cap);
+    const lab = makeLabel(name.replace('_', ' '), 0.07, 0.018, 'rgba(0,0,0,0)', '#e8eaf0', 40); lab.position.set(0, 0.0, 0.055); lab.rotation.x = -Math.PI/2; vial.add(lab);
+    body.userData.pickable = 'vial'; body.userData.drug = name; cap.userData.pickable = 'vial'; cap.userData.drug = name;
+    pickables.push(body, cap); shelf.add(vial);
+  });
+  const title = makeLabel('VIALS — click to dose', 0.3, 0.03, 'rgba(0,0,0,0)', '#8a90a0', 40); title.position.set((n-1)*0.075/2, 0.0, -0.1); title.rotation.x = -Math.PI/2; shelf.add(title);
+}
+const buttons = new THREE.Group(); buttons.position.set(-0.72, TABLE_Y, 0.25); scene.add(buttons);
+[['SCRAMBLE', 0xc0392b, 'scramble'], ['RESTORE', 0x27ae60, 'restore'], ['WASHOUT', 0x2e86de, 'washout'], ['BANANA', 0xd4a017, 'move_banana']].forEach(([label, color, cmd], i) => {
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.02, 24), mat(0x222631)); base.position.set(i*0.13, 0.01, 0); buttons.add(base);
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.02, 24), new THREE.MeshStandardMaterial({ color, emissive:color, emissiveIntensity:0.25, roughness:0.4 })); cap.position.set(i*0.13, 0.03, 0); cap.castShadow = true; buttons.add(cap);
+  cap.userData.pickable = 'button'; cap.userData.cmd = cmd; cap.userData.base = cap; pickables.push(cap);
+  const lab = makeLabel(label, 0.11, 0.025, 'rgba(0,0,0,0)', '#e8eaf0', 44); lab.position.set(i*0.13, 0.001, 0.07); lab.rotation.x = -Math.PI/2; buttons.add(lab);
+});
+pickables.push(bOuter, bCore);
+
+// ------------------------------------------------------------------ connection
+let ws = null, connected = false, hello = null, mode = 'live';
+let prev = null, latest = null, tPrev = 0, tLatest = 0, cmdN = 0;
+const statusEl = document.getElementById('status'), logEl = document.getElementById('log'), drugsEl = document.getElementById('drugs');
+function send(obj) { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(Object.assign({ id:'lab' + (++cmdN) }, obj))); } }
+function addLog(source, text) { logLines.push({ source, text }); if (logLines.length > 60) logLines.shift(); const d = document.createElement('div'); d.className = source; d.textContent = (source === 'agent' ? '▶ ' : source === 'user' ? 'you: ' : '') + text; logEl.appendChild(d); while (logEl.children.length > 6) logEl.removeChild(logEl.firstChild); if (source === 'agent') { const h = document.getElementById('chatHint'); h.textContent = 'experimenter online'; h.style.color = '#9af0c0'; } }
+let everConnected = false;
+function connect() {
+  if (!everConnected) statusEl.textContent = `connecting to ${WS_URL}…`;
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => { connected = true; everConnected = true; };
+  ws.onclose = () => { connected = false; statusEl.textContent = everConnected ? 'disconnected — start server.py (or fake_server.py); reconnecting automatically…' : `no server at ${WS_URL} — run  python3 server.py  (retrying…)`; setTimeout(connect, 1500); };
+  ws.onerror = () => {};
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'hello') { hello = m; mode = m.mode; buildBrain(m.sample); buildShelf(m.drugs); fillDrugSelect(m.drugs); addLog('lab', `connected: ${m.name || 'Maxime'} — ${m.mode} brain, ${m.n.toLocaleString()} neurons`); document.title = `${m.name || 'Maxime'} — Neuro Lab`; }
+    else if (m.type === 'state') { prev = latest; tPrev = tLatest; latest = m; tLatest = performance.now(); flashNeurons(m.fired); if (!dragging) { banana.position.set(m.banana.x*U, 0, m.banana.y*U); } trailPush(m.fly.x*U, m.fly.y*U); statusEl.innerHTML = `<b>${mode === 'fake' ? 'FAKE' : 'LIVE'}</b> · step ${m.t} · ${m.sps} steps/s · bananas ${m.caught}` + (m.scrambled ? ' · <span style="color:#ff5a5a">SCRAMBLED</span>' : '') + (m.trial ? ` · trial ${Math.round(100*m.trial.progress)}%` : '') + (m.paused ? ' · <span style="color:#ffd23f">PAUSED</span>' : ''); document.getElementById('pausedRow').style.display = m.paused ? '' : 'none'; const d = Object.entries(m.drugs||{}); drugsEl.textContent = d.length ? 'on board: ' + d.map(([k,v]) => `${k} ${v.toFixed(2)}`).join(', ') : 'no drugs on board'; }
+    else if (m.type === 'log') addLog(m.source, m.text);
+    else if (m.type === 'ack') { if (!m.ok) addLog('lab', `✗ ${m.cmd}: ${m.error}`); else if (m.cmd === 'dose') addLog('lab', `dosed ${Object.keys(m.data)[0]} → ${Object.values(m.data)[0].toFixed(2)}`); else if (['scramble','restore','washout'].includes(m.cmd)) addLog('lab', m.cmd); }
+    else if (m.type === 'result') { const r = m.metrics; addLog('lab', `result [${m.label}] bananas ${r.bananas} · activity ${r.activity.toFixed(3)} · firing ${(100*r.firing_all).toFixed(2)}% · synchrony ${r.synchrony.toFixed(2)}`); }
+  };
+}
+let lastTrailT = -1;
+function trailPush(x, z) { if (latest && latest.t === lastTrailT) return; lastTrailT = latest ? latest.t : 0; trailPts.push(x, z); if (trailPts.length > TRAIL*2) trailPts.splice(0, 2); const a = trailGeo.attributes.position.array; const n = trailPts.length/2; for (let i = 0; i < n; i++) { a[i*3] = trailPts[i*2]; a[i*3+1] = 0; a[i*3+2] = trailPts[i*2+1]; } trailGeo.attributes.position.needsUpdate = true; trailGeo.setDrawRange(0, n); }
+function clearTrail() { trailPts = []; trailGeo.setDrawRange(0, 0); }
+connect();
+
+// HTML panel
+const drugSel = document.getElementById('drug'), amountEl = document.getElementById('amount'), amtEl = document.getElementById('amt');
+amountEl.oninput = () => amtEl.textContent = (+amountEl.value).toFixed(2);
+function fillDrugSelect(drugs) { drugSel.innerHTML = ''; for (const k of Object.keys(drugs)) { const o = document.createElement('option'); o.value = k; o.textContent = k.replace('_',' '); drugSel.appendChild(o); } }
+document.getElementById('bDose').onclick = () => send({ cmd:'dose', drug:drugSel.value, amount:+amountEl.value });
+document.getElementById('bWash').onclick = () => send({ cmd:'washout' });
+document.getElementById('bScr').onclick = () => send({ cmd:'scramble' });
+document.getElementById('bRes').onclick = () => send({ cmd:'restore' });
+document.getElementById('bBan').onclick = () => { send({ cmd:'move_banana' }); clearTrail(); };
+document.getElementById('bTrial').onclick = () => send({ cmd:'run_trial', steps:400, label:'manual ' + (Object.keys(latest?.drugs||{}).join('+') || 'baseline') });
+document.getElementById('bResume').onclick = () => send({ cmd:'resume' });
+const chatEl = document.getElementById('chat');
+chatEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && chatEl.value.trim()) { send({ cmd:'log', source:'user', text:chatEl.value.trim() }); chatEl.value = ''; } e.stopPropagation(); });
+window.__lab = { send, act: (o) => act(o), pickables, get latest() { return latest; }, logLines, camera, banana, arena, controls };   // test hook
+addEventListener('keydown', (e) => { if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return; const k = e.key.toLowerCase(); if (k === 's') send({ cmd:'scramble' }); if (k === 'r') send({ cmd:'restore' }); if (k === 'b') { send({ cmd:'move_banana' }); clearTrail(); } if (k === 'w') send({ cmd:'washout' }); });
+
+// ------------------------------------------------------------------ picking: buttons, vials, banana drag
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+const arenaPlane = new THREE.Plane(new THREE.Vector3(0,1,0), -(TABLE_Y + 0.004));
+let dragging = false, downAt = null, downObj = null;
+function pickAt(clientX, clientY) { ptr.set((clientX/innerWidth)*2-1, -(clientY/innerHeight)*2+1); ray.setFromCamera(ptr, camera); const hits = ray.intersectObjects(pickables, false); return hits.length ? hits[0].object : null; }
+function act(obj) {
+  const u = obj.userData;
+  if (u.pickable === 'button') { if (u.cmd === 'move_banana') { send({ cmd:'move_banana' }); clearTrail(); } else send({ cmd:u.cmd }); pressAnim(obj); }
+  else if (u.pickable === 'vial') { send({ cmd:'dose', drug:u.drug, amount:+amountEl.value }); pressAnim(obj); }
+}
+function pressAnim(obj) { const y0 = obj.position.y; obj.position.y = y0 - 0.008; setTimeout(() => obj.position.y = y0, 120); }
+canvas.addEventListener('pointerdown', (e) => { const o = pickAt(e.clientX, e.clientY); downAt = [e.clientX, e.clientY]; downObj = o; if (o && o.userData.pickable === 'banana') { dragging = true; controls.enabled = false; } });
+canvas.addEventListener('pointermove', (e) => { if (!dragging) return; ptr.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1); ray.setFromCamera(ptr, camera); const p = new THREE.Vector3(); if (ray.ray.intersectPlane(arenaPlane, p)) { arena.worldToLocal(p); p.x = THREE.MathUtils.clamp(p.x, -ARENA/2+0.05, ARENA/2-0.05); p.z = THREE.MathUtils.clamp(p.z, -ARENA/2+0.05, ARENA/2-0.05); banana.position.set(p.x, 0, p.z); } });
+canvas.addEventListener('pointerup', (e) => {
+  if (dragging) { dragging = false; controls.enabled = true; send({ cmd:'move_banana', x:banana.position.x/U, y:banana.position.z/U }); clearTrail(); }
+  else if (downObj && downAt && Math.hypot(e.clientX-downAt[0], e.clientY-downAt[1]) < 6) act(downObj);
+  downObj = null;
+});
+
+// VR controllers: point and squeeze the trigger
+for (const i of [0,1]) {
+  const ctrl = renderer.xr.getController(i); scene.add(ctrl);
+  const beam = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1)]), new THREE.LineBasicMaterial({ color:0xffffff, transparent:true, opacity:0.4 })); beam.scale.z = 2; ctrl.add(beam);
+  const tmpM = new THREE.Matrix4();
+  ctrl.addEventListener('selectstart', () => { tmpM.identity().extractRotation(ctrl.matrixWorld); ray.ray.origin.setFromMatrixPosition(ctrl.matrixWorld); ray.ray.direction.set(0,0,-1).applyMatrix4(tmpM); const hits = ray.intersectObjects(pickables, false); if (hits.length) { const o = hits[0].object; if (o.userData.pickable === 'banana') { ctrl.userData.grab = true; } else act(o); } });
+  ctrl.addEventListener('selectend', () => { if (ctrl.userData.grab) { ctrl.userData.grab = false; send({ cmd:'move_banana', x:banana.position.x/U, y:banana.position.z/U }); clearTrail(); } });
+  ctrl.userData.update = () => { if (!ctrl.userData.grab) return; tmpM.identity().extractRotation(ctrl.matrixWorld); ray.ray.origin.setFromMatrixPosition(ctrl.matrixWorld); ray.ray.direction.set(0,0,-1).applyMatrix4(tmpM); const p = new THREE.Vector3(); if (ray.ray.intersectPlane(arenaPlane, p)) { arena.worldToLocal(p); banana.position.set(THREE.MathUtils.clamp(p.x,-ARENA/2+0.05,ARENA/2-0.05), 0, THREE.MathUtils.clamp(p.z,-ARENA/2+0.05,ARENA/2-0.05)); } };
+  scene.userData['ctrl'+i] = ctrl;
+}
+renderer.xr.addEventListener('sessionstart', () => { const base = renderer.xr.getReferenceSpace(); const off = new XRRigidTransform({ x:-0.15, y:0, z:-0.9 }); renderer.xr.setReferenceSpace(base.getOffsetReferenceSpace(off)); });
+
+// ------------------------------------------------------------------ animation
+function lerpAngle(a, b, t) { let d = b - a; while (d > Math.PI) d -= 2*Math.PI; while (d < -Math.PI) d += 2*Math.PI; return a + d*t; }
+let lastT = performance.now(), screenAcc = 0;
+renderer.setAnimationLoop(() => {
+  const now = performance.now(), dt = Math.min(0.1, (now - lastT)/1000); lastT = now;
+  controls.update();
+  if (latest) {
+    let x = latest.fly.x, y = latest.fly.y, ang = latest.fly.angle;
+    if (prev && tLatest > tPrev) { const t = THREE.MathUtils.clamp((now - tLatest)/(tLatest - tPrev), 0, 1.3); x = prev.fly.x + (latest.fly.x - prev.fly.x)*t; y = prev.fly.y + (latest.fly.y - prev.fly.y)*t; ang = lerpAngle(prev.fly.angle, latest.fly.angle, t); }
+    fly.position.set(x*U, 0, y*U); fly.rotation.y = -ang;                      // python y -> scene z, angle sign flips
+    const speed = latest.motor.forward; legPhase += dt * (6 + 40*speed);
+    const a = legGeo.attributes.position.array; let k = 0;
+    for (const s of [-1,1]) for (let i = 0; i < 3; i++) {
+      const off = (1 - i)*0.25*S, swing = Math.sin(legPhase + ((i*2 + (s<0?0:1)) % 2)*Math.PI) * 0.25*S;
+      const bx = off, bz = s*0.12*S, cx = bx + swing*0.4, cz = s*0.36*S, tx = bx + swing, tz = s*0.55*S;
+      a[k++] = bx; a[k++] = 0.2*S; a[k++] = bz;  a[k++] = cx; a[k++] = 0.3*S; a[k++] = cz;
+      a[k++] = cx; a[k++] = 0.3*S; a[k++] = cz;  a[k++] = tx; a[k++] = 0.0;   a[k++] = tz;
+      a[k++] = tx; a[k++] = 0.0;   a[k++] = tz;  a[k++] = tx; a[k++] = 0.0;   a[k++] = tz;
+    }
+    legGeo.attributes.position.needsUpdate = true;
+    wings.forEach((w, i) => w.rotation.y = (i ? -1 : 1) * 0.15 * Math.sin(now/90));
+    updateBrain(dt, latest.scrambled);
+  }
+  for (const i of [0,1]) scene.userData['ctrl'+i]?.userData.update?.();
+  screenAcc += dt; if (screenAcc > 1/15) { screenAcc = 0; drawScreen(latest); }
+  renderer.render(scene, camera);
+});
+addEventListener('resize', () => { camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+drawScreen(null);
+</script>
+</body>
+</html>
