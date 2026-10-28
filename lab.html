@@ -31,6 +31,25 @@
   #help { right:16px; bottom:14px; font-size:11px; color:var(--dim); text-align:right; }
   #drugs { font-size:12px; color:#ffb3b3; min-height:16px; margin-bottom:6px; }
   #vr { position:absolute; left:50%; transform:translateX(-50%); bottom:16px; }
+  /* notebook drawer */
+  #nb { left:16px; top:112px; bottom:200px; width:400px; pointer-events:auto; background:rgba(14,17,24,.9); border:1px solid #23283a; border-radius:10px; padding:10px 12px; overflow:auto; backdrop-filter:blur(6px); display:none; font-size:13px; }
+  #nb.open { display:block; }
+  #nb h2 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); display:flex; justify-content:space-between; align-items:center; }
+  #nb .tabs { display:flex; gap:6px; margin-bottom:8px; }
+  #nb .tabs button.on { background:#2a3350; border-color:#4a5a8a; }
+  #nb .exp { padding:7px 8px; border:1px solid #23283a; border-radius:7px; margin-bottom:6px; cursor:pointer; }
+  #nb .exp:hover { background:#1b2030; }
+  #nb .exp .t { font-weight:600; } #nb .exp .h { color:var(--dim); font-size:12px; } #nb .exp .m { color:var(--dim); font-size:11px; }
+  .badge { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:700; letter-spacing:.3px; }
+  .badge.SUPPORTED { background:#1f5c3a; color:#9af0c0; } .badge.NOT { background:#6b2222; color:#ff9a9a; } .badge.CANT { background:#5a4a1a; color:#ffe58a; } .badge.MIXED { background:#3a3a5a; color:#cfd8ff; } .badge.RUNNING { background:#2a3350; color:#a9d0ff; }
+  #nb label { display:block; font-size:11px; color:var(--dim); margin-top:6px; }
+  #nb input[type=text], #nb textarea, #nb select, #nb input[type=number] { width:100%; box-sizing:border-box; background:#1b2030; color:var(--fg); border:1px solid #2d3448; border-radius:7px; padding:5px; font:inherit; font-size:13px; }
+  #nb textarea { height:50px; resize:vertical; }
+  #nb .card { border:1px solid #3d4a2d; border-radius:8px; padding:8px 10px; background:#121a14; margin-top:8px; }
+  #nb .card h3 { margin:0 0 4px; font-size:14px; } #nb .card p { margin:4px 0; } #nb .card ol, #nb .card ul { margin:4px 0 4px 18px; padding:0; }
+  #nb table { border-collapse:collapse; width:100%; font-size:12px; margin:6px 0; } #nb td, #nb th { border:1px solid #2d3448; padding:3px 5px; text-align:right; } #nb th:first-child, #nb td:first-child { text-align:left; }
+  #nb pre { white-space:pre-wrap; font:inherit; color:#d8f5e4; background:#0e1118; padding:6px 8px; border-radius:6px; }
+  #nbToggle { pointer-events:auto; }
 </style>
 </head>
 <body>
@@ -39,6 +58,25 @@
   <h1>Metaverse Neuro Lab</h1>
   <div class="sub">Maxime — a 139,255-neuron fly, her body, and the drugs you drop on her</div>
   <div id="status">connecting…</div>
+  <div style="margin-top:6px"><button id="nbToggle">📓 Notebook &amp; experiments</button></div>
+</div>
+<div id="nb" class="hud">
+  <h2><span>Lab notebook</span><button id="nbClose" style="padding:2px 8px">✕</button></h2>
+  <div class="tabs"><button id="tabList" class="on">Experiments</button><button id="tabNew">New experiment</button></div>
+  <div id="nbList"></div>
+  <div id="nbNew" style="display:none">
+    <label>Title</label><input id="fTitle" type="text" placeholder="Does caffeine make Maxime walk more?">
+    <label>Hypothesis (one sentence you can be wrong about)</label><input id="fHyp" type="text" placeholder="Caffeine increases Maxime's walking.">
+    <label>Description</label><textarea id="fDesc" placeholder="Why we think so and what we'll do."></textarea>
+    <label>Treatment: substance and amount (control is always sober)</label>
+    <div class="row"><select id="fDrug" style="flex:2"></select><input id="fAmt" type="number" min="0" max="2" step="0.05" value="0.5" style="flex:1"></div>
+    <label>Primary measurement</label><select id="fMeasure"></select>
+    <label>Prediction (treatment compared with sober)</label>
+    <select id="fPred"><option value="higher">higher</option><option value="lower">lower</option><option value="different">different (either way)</option></select>
+    <div class="row"><div style="flex:1"><label>Repeats per condition</label><input id="fRep" type="number" min="3" max="10" value="5"></div><div style="flex:1"><label>Steps per run</label><input id="fSteps" type="number" min="100" max="2000" step="50" value="400"></div></div>
+    <div class="row" style="margin-top:10px"><button id="fPropose" class="green" style="flex:1">Write the card</button></div>
+  </div>
+  <div id="nbCard"></div>
 </div>
 <div id="panel" class="hud">
   <h2>Experiment</h2>
@@ -148,7 +186,7 @@ let legPhase = 0;
 
 // ------------------------------------------------------------------ the brain hologram
 const brainGroup = new THREE.Group(); brainGroup.position.set(0.15, TABLE_Y + 0.72, 0.05); scene.add(brainGroup);
-let brainPts = null, brainIntensity = null, brainBase = null, brainN = 0, brainRegionOf = [];
+let brainPts = null, brainIntensity = null, brainBase = null, brainN = 0, brainRegionOf = [], brainTypes = null;
 const halo = new THREE.Mesh(new THREE.SphereGeometry(0.33, 32, 24), new THREE.MeshBasicMaterial({ color:0x6a8cff, transparent:true, opacity:0.05, side:THREE.BackSide })); brainGroup.add(halo);
 const brainLabel = makeLabel("Maxime's brain · 139,255 neurons · live spikes", 0.4, 0.028, 'rgba(0,0,0,0)', '#cfd8ff', 30); brainLabel.position.set(0.15, TABLE_Y + 0.33, 0.05); scene.add(brainLabel);
 function buildBrain(sample) {
@@ -159,15 +197,22 @@ function buildBrain(sample) {
   const lobes = { sens_L:[[-0.14,0.02,0.18],[0.07,0.05,0.06]], sens_R:[[0.14,0.02,0.18],[0.07,0.05,0.06]],
                   central:[[0,0.04,0],[0.22,0.15,0.17]], motor_L:[[-0.12,-0.12,-0.14],[0.08,0.06,0.07]], motor_R:[[0.12,-0.12,-0.14],[0.08,0.06,0.07]] };
   let i = 0;
+  const real = Array.isArray(sample.positions) && sample.positions.length === brainN;   // FlyWire: real neuron positions
   for (const [name, cnt] of sample.bands) {
     const [c, r] = lobes[name] || lobes.central, color = new THREE.Color(REGION_COLOR[name] || 0xffffff);
     for (let k = 0; k < cnt; k++, i++) {
-      let x, y, z; do { x = Math.random()*2-1; y = Math.random()*2-1; z = Math.random()*2-1; } while (x*x+y*y+z*z > 1);
-      pos[i*3] = c[0] + x*r[0]; pos[i*3+1] = c[1] + y*r[1]; pos[i*3+2] = c[2] + z*r[2];
+      if (real) {                                   // FAFB axes: x = left-right, y = dorsal-ventral (down), z = front-back
+        const p = sample.positions[i]; const S = 0.3;
+        pos[i*3] = p[0]*S; pos[i*3+1] = -p[1]*S; pos[i*3+2] = p[2]*S;
+      } else {
+        let x, y, z; do { x = Math.random()*2-1; y = Math.random()*2-1; z = Math.random()*2-1; } while (x*x+y*y+z*z > 1);
+        pos[i*3] = c[0] + x*r[0]; pos[i*3+1] = c[1] + y*r[1]; pos[i*3+2] = c[2] + z*r[2];
+      }
       brainBase[i*3] = color.r*0.35; brainBase[i*3+1] = color.g*0.35; brainBase[i*3+2] = color.b*0.35;
       brainRegionOf.push(name);
     }
   }
+  brainTypes = sample.types || null;
   col.set(brainBase);
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   brainPts = new THREE.Points(g, new THREE.PointsMaterial({ size:0.011, vertexColors:true, transparent:true, opacity:0.95, blending:THREE.AdditiveBlending, depthWrite:false }));
@@ -201,7 +246,7 @@ function drawScreen(st) {
   scr.fillStyle = '#e8eaf0'; scr.font = 'bold 30px system-ui, sans-serif'; scr.textBaseline = 'top';
   scr.fillText('LAB MONITOR  ·  subject: ' + (hello?.name || 'Maxime'), 28, 22);
   scr.font = '20px system-ui, sans-serif'; scr.fillStyle = '#8a90a0';
-  scr.fillText(connected ? (st ? `${mode.toUpperCase()}   step ${st.t}   ${st.sps} steps/s   bananas ${st.caught}` : 'connected') : 'waiting for server…', 28, 62);
+  scr.fillText(connected ? (st ? `${hello?.wiring || mode.toUpperCase()}   step ${st.t}   ${st.sps} steps/s   bananas ${st.caught}` : 'connected') : 'waiting for server…', 28, 62);
   if (st) {
     // firing bars
     const names = ['sens_L','sens_R','central','motor_L','motor_R'];
@@ -225,9 +270,21 @@ function drawScreen(st) {
     scr.fillStyle = drugs.length ? '#ffb3b3' : '#8a90a0';
     scr.fillText(drugs.length ? 'on board: ' + drugs.map(([k,v]) => `${k} ${v.toFixed(2)}`).join(', ') : 'no drugs on board', xs, y); y += 26;
     if (st.trial) { scr.fillStyle = '#ffd23f'; scr.fillText(`trial "${st.trial.label}"  ${Math.round(100*st.trial.progress)}%`, xs, y); scr.fillStyle = '#2a2f40'; scr.fillRect(xs, y+26, 420, 10); scr.fillStyle = '#ffd23f'; scr.fillRect(xs, y+26, 420*st.trial.progress, 10); }
+    const ex = st.experiment;
+    if (ex) {                                                   // live experiment panel
+      scr.fillStyle = '#9af0c0'; scr.font = 'bold 20px system-ui, sans-serif';
+      scr.fillText(`EXPERIMENT: ${ex.title.slice(0, 40)}`, xs, y); y += 26;
+      scr.font = '18px system-ui, sans-serif'; scr.fillStyle = '#e8eaf0';
+      scr.fillText(`${ex.condition || ''} — run ${ex.repeat} of ${ex.n_rep} (${ex.phase})   condition ${ex.cond_i}/${ex.n_cond}`, xs, y); y += 22;
+      scr.fillStyle = '#2a2f40'; scr.fillRect(xs, y, 420, 10); scr.fillStyle = '#9af0c0'; scr.fillRect(xs, y, 420*ex.progress, 10); y += 20;
+      const names = Object.keys(ex.means), vals = names.map(n => ex.means[n]).filter(v => v != null), vmax = Math.max(1e-9, ...vals);
+      scr.font = '16px system-ui, sans-serif';
+      names.forEach((n, i) => { const v = ex.means[n]; scr.fillStyle = '#c9cdd8'; scr.fillText(n.slice(0, 16), xs, y + i*22); scr.fillStyle = '#1b2030'; scr.fillRect(xs+150, y + i*22 + 2, 220, 14); if (v != null) { scr.fillStyle = i === 0 ? '#5aa9ff' : '#ffd23f'; scr.fillRect(xs+150, y + i*22 + 2, 220*v/vmax, 14); scr.fillStyle = '#e8eaf0'; scr.fillText(fmtv(v) + `  (${ex.values[n].length} runs)`, xs+378, y + i*22); } });
+      y += names.length*22;
+    }
     // thought
     scr.fillStyle = '#ffd23f'; scr.font = 'italic 20px system-ui, sans-serif';
-    wrapText(`“${st.thought || ''}”`, 28, 330, W-56, 26, 2);
+    wrapText(`“${st.thought || ''}”`, 28, 330, st.experiment ? 500 : W-56, 26, 2);
   }
   // log
   scr.fillStyle = '#2a2f40'; scr.fillRect(28, 392, W-56, 1);
@@ -252,23 +309,25 @@ function makeLabel(text, w, h, bg, fg, size=48) {
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace;
   return new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map:t, transparent:true }));
 }
-const VIAL_COLORS = { picrotoxin:0xff8c42, ttx:0x3a3f5c, tetanus_toxin:0x8e44ad, caffeine:0x6b3e1e, isoflurane:0x5ad1ff, ethanol:0xffe58a, nicotine:0x9acd32 };
+const VIAL_COLORS = { picrotoxin:0xff8c42, ttx:0x3a3f5c, tetanus_toxin:0x8e44ad, caffeine:0x6b3e1e, isoflurane:0x5ad1ff, ethanol:0xffe58a, nicotine:0x9acd32, deet:0xf4a261, picaridin:0xe9c46a, citronellal:0xc7f464, pmd:0xa8e6cf, permethrin:0xe63946, amphetamine:0xff6b9d, bupropion:0xb388ff, cocaine:0xf1faee };
 const shelf = new THREE.Group(); shelf.position.set(-0.72, TABLE_Y, -0.3); scene.add(shelf);
 function buildShelf(drugs) {
   while (shelf.children.length) shelf.remove(shelf.children[0]);
   for (let i = pickables.length - 1; i >= 0; i--) if (pickables[i].userData.pickable === 'vial') pickables.splice(i, 1);   // no duplicates on reconnect
   const names = Object.keys(drugs); const n = names.length;
-  const board = new THREE.Mesh(new THREE.BoxGeometry(0.1 + n*0.075, 0.01, 0.16), mat(0x2a2f3a)); board.position.set((n-1)*0.075/2, 0.005, 0); shelf.add(board);
+  const cols = n > 8 ? Math.ceil(n / 2) : n, rows = Math.ceil(n / cols), dx = cols > 7 ? 0.058 : 0.075;   // two tighter rows once the library grows
+  shelf.position.x = cols > 7 ? -0.82 : -0.72;                                                            // keep clear of the arena
+  const board = new THREE.Mesh(new THREE.BoxGeometry(0.06 + cols*dx, 0.01, 0.06 + rows*0.1), mat(0x2a2f3a)); board.position.set((cols-1)*dx/2, 0.005, (rows-1)*0.1/2); shelf.add(board);
   names.forEach((name, i) => {
-    const vial = new THREE.Group(); vial.position.set(i*0.075, 0.01, 0);
+    const vial = new THREE.Group(); vial.position.set((i % cols)*dx, 0.01, Math.floor(i / cols)*0.1);
     const body = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.08, 18), new THREE.MeshPhysicalMaterial({ color:VIAL_COLORS[name] || 0xffffff, transmission:0.5, roughness:0.2, transparent:true, opacity:0.85 }));
     body.position.y = 0.04; body.castShadow = true; vial.add(body);
     const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.015, 18), mat(0x222222)); cap.position.y = 0.0875; vial.add(cap);
-    const lab = makeLabel(name.replace('_', ' '), 0.07, 0.018, 'rgba(0,0,0,0)', '#e8eaf0', 40); lab.position.set(0, 0.0, 0.055); lab.rotation.x = -Math.PI/2; vial.add(lab);
+    const lab = makeLabel(name.replace('_', ' '), 0.07, 0.016, 'rgba(0,0,0,0)', '#e8eaf0', 40); lab.position.set(0, 0.0, 0.055); lab.rotation.x = -Math.PI/2; vial.add(lab);
     body.userData.pickable = 'vial'; body.userData.drug = name; cap.userData.pickable = 'vial'; cap.userData.drug = name;
     pickables.push(body, cap); shelf.add(vial);
   });
-  const title = makeLabel('VIALS — click to dose', 0.3, 0.03, 'rgba(0,0,0,0)', '#8a90a0', 40); title.position.set((n-1)*0.075/2, 0.0, -0.1); title.rotation.x = -Math.PI/2; shelf.add(title);
+  const title = makeLabel('VIALS — click to dose', 0.3, 0.03, 'rgba(0,0,0,0)', '#8a90a0', 40); title.position.set((cols-1)*dx/2, 0.0, -0.1); title.rotation.x = -Math.PI/2; shelf.add(title);
 }
 const buttons = new THREE.Group(); buttons.position.set(-0.72, TABLE_Y, 0.25); scene.add(buttons);
 [['SCRAMBLE', 0xc0392b, 'scramble'], ['RESTORE', 0x27ae60, 'restore'], ['WASHOUT', 0x2e86de, 'washout'], ['BANANA', 0xd4a017, 'move_banana']].forEach(([label, color, cmd], i) => {
@@ -294,10 +353,14 @@ function connect() {
   ws.onerror = () => {};
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
-    if (m.type === 'hello') { hello = m; mode = m.mode; buildBrain(m.sample); buildShelf(m.drugs); fillDrugSelect(m.drugs); addLog('lab', `connected: ${m.name || 'Maxime'} — ${m.mode} brain, ${m.n.toLocaleString()} neurons`); document.title = `${m.name || 'Maxime'} — Neuro Lab`; }
-    else if (m.type === 'state') { prev = latest; tPrev = tLatest; latest = m; tLatest = performance.now(); flashNeurons(m.fired); if (!dragging) { banana.position.set(m.banana.x*U, 0, m.banana.y*U); } trailPush(m.fly.x*U, m.fly.y*U); statusEl.innerHTML = `<b>${mode === 'fake' ? 'FAKE' : 'LIVE'}</b> · step ${m.t} · ${m.sps} steps/s · bananas ${m.caught}` + (m.scrambled ? ' · <span style="color:#ff5a5a">SCRAMBLED</span>' : '') + (m.trial ? ` · trial ${Math.round(100*m.trial.progress)}%` : '') + (m.paused ? ' · <span style="color:#ffd23f">PAUSED</span>' : ''); document.getElementById('pausedRow').style.display = m.paused ? '' : 'none'; const d = Object.entries(m.drugs||{}); drugsEl.textContent = d.length ? 'on board: ' + d.map(([k,v]) => `${k} ${v.toFixed(2)}`).join(', ') : 'no drugs on board'; }
+    if (m.type === 'hello') { hello = m; mode = m.mode; buildBrain(m.sample); buildShelf(m.drugs); fillDrugSelect(m.drugs); addLog('lab', `connected: ${m.name || 'Maxime'} — ${m.wiring || m.mode}, ${m.n.toLocaleString()} neurons`); document.title = `${m.name || 'Maxime'} — Neuro Lab`;
+      document.querySelector('#top .sub').textContent = `${m.name || 'Maxime'} — ${m.wiring === 'FlyWire v783 connectome' ? 'the real FlyWire v783 wiring' : (m.wiring || 'synthetic wiring')}, ${m.n.toLocaleString()} neurons`;
+      brainLabel.material.map = makeLabel(`${m.name || 'Maxime'}'s brain · ${m.wiring || ''} · live spikes`, 0.4, 0.028, 'rgba(0,0,0,0)', '#cfd8ff', 30).material.map; brainLabel.material.needsUpdate = true;
+      notebook = m.notebook || []; fillForm(); renderList(); }
+    else if (m.type === 'state') { prev = latest; tPrev = tLatest; latest = m; tLatest = performance.now(); flashNeurons(m.fired); if (!dragging) { banana.position.set(m.banana.x*U, 0, m.banana.y*U); } trailPush(m.fly.x*U, m.fly.y*U); statusEl.innerHTML = `<b>${mode === 'fake' ? 'FAKE' : 'LIVE'}</b> · step ${m.t} · ${m.sps} steps/s · bananas ${m.caught}` + (m.scrambled ? ' · <span style="color:#ff5a5a">SCRAMBLED</span>' : '') + (m.trial ? ` · trial ${Math.round(100*m.trial.progress)}%` : '') + (m.experiment ? ` · <span style="color:#9af0c0">experiment ${Math.round(100*m.experiment.progress)}%</span>` : '') + (m.paused ? ' · <span style="color:#ffd23f">PAUSED</span>' : ''); document.getElementById('pausedRow').style.display = m.paused ? '' : 'none'; const d = Object.entries(m.drugs||{}); drugsEl.textContent = d.length ? 'on board: ' + d.map(([k,v]) => `${k} ${v.toFixed(2)}`).join(', ') : 'no drugs on board'; }
     else if (m.type === 'log') addLog(m.source, m.text);
-    else if (m.type === 'ack') { if (!m.ok) addLog('lab', `✗ ${m.cmd}: ${m.error}`); else if (m.cmd === 'dose') addLog('lab', `dosed ${Object.keys(m.data)[0]} → ${Object.values(m.data)[0].toFixed(2)}`); else if (['scramble','restore','washout'].includes(m.cmd)) addLog('lab', m.cmd); }
+    else if (m.type === 'ack') { const cb = pendingAcks[m.id]; if (cb) { delete pendingAcks[m.id]; cb(m); return; } if (!m.ok) addLog('lab', `✗ ${m.cmd}: ${m.error}`); else if (m.cmd === 'dose') addLog('lab', `dosed ${Object.keys(m.data)[0]} → ${Object.values(m.data)[0].toFixed(2)}`); else if (['scramble','restore','washout'].includes(m.cmd)) addLog('lab', m.cmd); }
+    else if (m.type && m.type.startsWith('experiment') || m.type === 'proposal') onExperimentMessage(m);
     else if (m.type === 'result') { const r = m.metrics; addLog('lab', `result [${m.label}] bananas ${r.bananas} · activity ${r.activity.toFixed(3)} · firing ${(100*r.firing_all).toFixed(2)}% · synchrony ${r.synchrony.toFixed(2)}`); }
   };
 }
@@ -319,8 +382,77 @@ document.getElementById('bTrial').onclick = () => send({ cmd:'run_trial', steps:
 document.getElementById('bResume').onclick = () => send({ cmd:'resume' });
 const chatEl = document.getElementById('chat');
 chatEl.addEventListener('keydown', (e) => { if (e.key === 'Enter' && chatEl.value.trim()) { send({ cmd:'log', source:'user', text:chatEl.value.trim() }); chatEl.value = ''; } e.stopPropagation(); });
-window.__lab = { send, act: (o) => act(o), pickables, get latest() { return latest; }, logLines, camera, banana, arena, controls };   // test hook
+window.__lab = { send, act: (o) => act(o), pickables, get latest() { return latest; }, logLines, camera, banana, arena, controls, connected: () => connected, state: () => latest, lastRecord: () => lastDone };   // test hook
 addEventListener('keydown', (e) => { if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return; const k = e.key.toLowerCase(); if (k === 's') send({ cmd:'scramble' }); if (k === 'r') send({ cmd:'restore' }); if (k === 'b') { send({ cmd:'move_banana' }); clearTrail(); } if (k === 'w') send({ cmd:'washout' }); });
+
+// ------------------------------------------------------------------ notebook & experiments
+const nb = document.getElementById('nb'), nbList = document.getElementById('nbList'), nbNew = document.getElementById('nbNew'), nbCard = document.getElementById('nbCard');
+let notebook = [], pendingAcks = {}, currentExp = null, lastDone = null, ownProposal = false;
+document.getElementById('nbToggle').onclick = () => { nb.classList.toggle('open'); if (nb.classList.contains('open')) sendAsk({ cmd:'list_notebook' }, (a) => { notebook = a.data.notebook; renderList(); }); };
+document.getElementById('nbClose').onclick = () => nb.classList.remove('open');
+document.getElementById('tabList').onclick = () => { nbList.style.display = ''; nbNew.style.display = 'none'; nbCard.innerHTML = ''; tabOn('tabList'); };
+document.getElementById('tabNew').onclick = () => { nbList.style.display = 'none'; nbNew.style.display = ''; nbCard.innerHTML = ''; tabOn('tabNew'); };
+function tabOn(id) { for (const t of ['tabList','tabNew']) document.getElementById(t).classList.toggle('on', t === id); }
+function sendAsk(obj, cb) { const id = 'lab' + (++cmdN); pendingAcks[id] = cb; if (ws && ws.readyState === 1) ws.send(JSON.stringify(Object.assign({ id }, obj))); }
+function badge(v) { const cls = !v ? 'RUNNING' : v.startsWith('NOT') ? 'NOT' : v.startsWith("CAN") ? 'CANT' : v; return `<span class="badge ${cls}">${v || 'running'}</span>`; }
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function renderList() {
+  if (!notebook.length) { nbList.innerHTML = '<div style="color:var(--dim)">No experiments yet. Write one in “New experiment”, or ask the experimenter in the chat box.</div>'; return; }
+  nbList.innerHTML = notebook.slice().reverse().map(e => `<div class="exp" data-id="${esc(e.id)}"><div class="t">${esc(e.title)} ${badge(e.verdict)}</div><div class="h">${esc(e.hypothesis)}</div><div class="m">${esc(e.date)} · fly age ${e.fly_age} · by ${esc(e.author)} · ${esc(e.subject)}${e.rerun_of ? ' · re-run' : ''}</div></div>`).join('');
+  for (const el of nbList.querySelectorAll('.exp')) el.onclick = () => openRecord(el.dataset.id);
+}
+function openRecord(id) { sendAsk({ cmd:'get_experiment', exp:id }, (a) => { if (!a.ok) return addLog('lab', '✗ ' + a.error); renderRecord(a.data.record, a.data.steps); }); }
+function cardHtml(card, steps, extra='') {
+  const m = hello?.measures || {};
+  return `<div class="card"><h3>${esc(card.title)}</h3>
+    <p><b>Hypothesis:</b> ${esc(card.hypothesis)}</p>${card.description ? `<p><b>Description:</b> ${esc(card.description)}</p>` : ''}
+    <p><b>Steps:</b></p><ol>${steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
+    <p><b>Variables:</b> changed — ${esc(card.variables.changed)}; measured — ${card.variables.measured.map(k => esc(m[k] || k)).join(', ')}; held constant — ${card.variables.held.map(esc).join(', ')}</p>
+    <p><b>Constraints:</b></p><ul>${card.constraints.map(c => `<li>${esc(c)}</li>`).join('')}</ul>
+    <p><b>Primary measurement:</b> ${esc(m[card.measure] || card.measure)} · <b>prediction:</b> ${esc(card.prediction)} · <b>repeats:</b> ${card.repeats} · <b>by:</b> ${esc(card.author)}</p>${extra}</div>`;
+}
+function renderProposal(id, card, steps) {
+  nb.classList.add('open'); nbList.style.display = 'none'; nbNew.style.display = 'none';
+  nbCard.innerHTML = `<div style="color:var(--acc);font-weight:600;margin-top:6px">Proposed experiment — review, then run</div>` + cardHtml(card, steps,
+    `<div class="row" style="margin-top:8px"><button class="green" id="pRun" style="flex:1">▶ Run it</button><button id="pDiscard" style="flex:1">Discard</button></div>`);
+  document.getElementById('pRun').onclick = () => { send({ cmd:'run_experiment', exp:id }); nbCard.innerHTML = '<div style="color:var(--dim)">Running… watch the wall and Maxime.</div>'; };
+  document.getElementById('pDiscard').onclick = () => { send({ cmd:'discard_proposal', exp:id }); nbCard.innerHTML = ''; nbList.style.display = ''; tabOn('tabList'); };
+}
+function renderRecord(rec, steps) {
+  const c = rec.card, m = hello?.measures || {};
+  const conds = Object.keys(rec.results);
+  const rows = conds.map(n => { const vals = rec.results[n].map(r => c.measure.startsWith('firing.') ? r.firing[c.measure.split('.')[1]] : r[c.measure]); const avg = vals.reduce((a,b)=>a+b,0)/vals.length; return `<tr><td>${esc(n)}</td>${vals.map(v => `<td>${fmtv(v)}</td>`).join('')}<td><b>${fmtv(avg)}</b></td></tr>`; }).join('');
+  nbList.style.display = 'none'; nbNew.style.display = 'none';
+  nbCard.innerHTML = `<div style="margin-top:6px"><button id="rBack" style="padding:2px 8px">← back</button></div>` + cardHtml(c, steps,
+    `<p><b>Measurements</b> (${esc(m[c.measure] || c.measure)}):</p><table><tr><th>condition</th>${Array.from({length:c.repeats},(_,i)=>`<th>run ${i+1}</th>`).join('')}<th>average</th></tr>${rows}</table>
+     <p><b>Analysis:</b></p><pre>${esc(rec.analysis)}</pre><p><b>Verdict:</b> ${badge(rec.verdict)}</p>
+     <p class="m" style="color:var(--dim);font-size:11px">${esc(rec.date)} · subject ${esc(rec.subject)} · fly age ${rec.fly_age} steps · ${rec.seconds}s${rec.rerun_of ? ' · re-run of an earlier experiment' : ''}</p>
+     <div class="row" style="margin-top:6px"><button class="yellow" id="rAgain" style="flex:1">↻ Run it again</button></div>`);
+  document.getElementById('rBack').onclick = () => { nbCard.innerHTML = ''; nbList.style.display = ''; tabOn('tabList'); };
+  document.getElementById('rAgain').onclick = () => { send({ cmd:'run_experiment', exp:rec.id }); nbCard.innerHTML = '<div style="color:var(--dim)">Running again… watch the wall.</div>'; };
+}
+function fmtv(x) { if (x == null || Number.isNaN(x)) return 'n/a'; const a = Math.abs(x); return a >= 100 ? x.toFixed(0) : a >= 1 ? x.toFixed(2) : x.toFixed(3); }
+function fillForm() {
+  const d = document.getElementById('fDrug'); d.innerHTML = ''; for (const k of Object.keys(hello.drugs)) { const o = document.createElement('option'); o.value = k; o.textContent = k.replace('_',' '); d.appendChild(o); }
+  const ms = document.getElementById('fMeasure'); ms.innerHTML = ''; for (const [k, v] of Object.entries(hello.measures)) { const o = document.createElement('option'); o.value = k; o.textContent = v; ms.appendChild(o); }
+}
+document.getElementById('fPropose').onclick = () => {
+  const drug = document.getElementById('fDrug').value, amt = +document.getElementById('fAmt').value;
+  const card = { title: document.getElementById('fTitle').value, hypothesis: document.getElementById('fHyp').value, description: document.getElementById('fDesc').value,
+    control: { name: 'sober', setup: [] }, treatments: [{ name: `${drug.replace('_',' ')} ${amt}`, setup: [{ cmd:'dose', drug, amount: amt }] }],
+    measure: document.getElementById('fMeasure').value, prediction: document.getElementById('fPred').value,
+    repeats: +document.getElementById('fRep').value, steps: +document.getElementById('fSteps').value, author: 'human' };
+  ownProposal = true;
+  sendAsk({ cmd:'propose_experiment', card }, (a) => { ownProposal = false; if (!a.ok) { addLog('lab', '✗ ' + a.error); return; } renderProposal(a.data.id, a.data.card, a.data.steps); });
+};
+function onExperimentMessage(m) {
+  if (m.type === 'proposal') { if (!(m.card.author === 'human' && ownProposal)) renderProposal(m.id, m.card, m.steps); ownProposal = false; addLog('lab', `proposed: ${m.card.title}`); }
+  else if (m.type === 'experiment_started') { currentExp = m; addLog('lab', `experiment started: ${m.card.title}`); }
+  else if (m.type === 'experiment_run') { addLog('lab', `run done — ${m.condition} #${m.repeat}: ${fmtv(m.value)}`); }
+  else if (m.type === 'experiment_done') { notebook = m.notebook; lastDone = m.record; currentExp = null; addLog('lab', `verdict: ${m.record.verdict} — ${m.record.card.title}`); renderList(); nb.classList.add('open'); renderRecord(m.record, m.steps || stepsOf(m.record.card)); }
+  else if (m.type === 'experiment_cancelled') { currentExp = null; addLog('lab', 'experiment cancelled'); }
+}
+function stepsOf(card) { return [`see the notebook page for the full procedure`]; }
 
 // ------------------------------------------------------------------ picking: buttons, vials, banana drag
 const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();

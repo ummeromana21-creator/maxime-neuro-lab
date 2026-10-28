@@ -15,3 +15,11 @@ _old/
 # screenshots / scratch
 *.png
 *.tmp_rename
+
+# FlyWire data: download the v783 CSVs from codex.flywire.ai yourself (terms of use); the built cache is small enough to keep
+flywire/*.csv
+flywire/*.csv.gz
+flywire/*.zip
+
+# cached public lookups
+notebook/lookups.json

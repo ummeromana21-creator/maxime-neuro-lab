@@ -61,6 +61,7 @@ class FlyBrain:
                                  #   1.0 -> brain nearly silent, 1.7 -> runaway; 1.3 is the sweet spot
             'noise':      0.8,   # std of per-step current noise
             'I_sens':     2.5,   # current per unit smell into sensory neurons
+            'I_sens_bg':  0.0,   # odour-independent drive into the smell receptor neurons (chemicals that excite them)
             'g_exc':      0.5,   # gain of excitatory synapses (drugs: nicotine up, anaesthetics down)
             'g_inh':      0.5,   # gain of inhibitory synapses (drugs: picrotoxin -> 0, ethanol up)
             'ttx_frac':   0.0,   # fraction of neurons whose sodium channels are blocked (cannot spike)
@@ -69,15 +70,24 @@ class FlyBrain:
             'turn_gain':   15.0, # body: turn per unit (rate_L - rate_R)
                                  #   below ~10 the turning circle is wider than the banana -> orbits
             'motor_out':    1.0, # scales motor output (0 = neuromuscular block)
+            # release gain per transmitter class of the PRE-synaptic neuron (1 = connectome as is). Only brains that
+            # know each neuron's transmitter (FlyWire) use these; the random fly ignores them.
+            'g_ACH': 1.0, 'g_GABA': 1.0, 'g_GLUT': 1.0, 'g_DA': 1.0, 'g_SER': 1.0, 'g_OCT': 1.0,
         }
         self._defaults = dict(self.params)
 
         # ---- synapses ---------------------------------------------------------------
         self.W = self._build_connectome()
+        self.wiring = 'random-lateralised'
+        self._init_dynamics()
+
+    def _init_dynamics(self):
+        """State vectors and caches. Called after self.W and self.regions exist
+        (by this class, and by the FlyWire-connectome subclass in flywire_brain.py)."""
+        n = self.n
+        c0, c1 = self.regions['central']
         self.W0 = self.W.copy()                      # pristine copy for restore()
         self._WT, self._WT_neg, self._WT_src = None, None, None   # caches of W.T (see step)
-
-        # ---- state -------------------------------------------------------------------
         p = self.params
         self.v = self.rng.normal(p['v_rest'], 2.0, n).astype(np.float32)
         self.refrac = np.zeros(n, dtype=np.int16)
@@ -139,6 +149,25 @@ class FlyBrain:
         return W
 
     # ------------------------------------------------------------------ dynamics
+    NT_NAMES = ('ACH', 'GABA', 'GLUT', 'DA', 'SER', 'OCT')
+
+    def _pre_gain(self):
+        """Per-neuron release multiplier from the g_<transmitter> params, or None when all are 1."""
+        p = self.params
+        key = tuple(p.get('g_' + k, 1.0) for k in self.NT_NAMES)
+        cache = getattr(self, '_nt_cache', (None, None))
+        if key == cache[0]:
+            return cache[1]
+        groups = getattr(self, 'nt_groups', None) or {}
+        vec = None
+        if groups and any(g != 1.0 for g in key):
+            vec = np.ones(self.n, dtype=np.float32)
+            for k, g in zip(self.NT_NAMES, key):
+                if g != 1.0 and k in groups:
+                    vec[groups[k]] = g
+        self._nt_cache = (key, vec)
+        return vec
+
     def step(self, sensory):
         """One time step. sensory[0] = left smell, sensory[1] = right smell (0..1).
         Returns (motor, spiked): motor = [forward, turn]; spiked = bool array (n,)."""
@@ -150,8 +179,9 @@ class FlyBrain:
 
         # input current: background + noise + smell into the sensory neurons
         I = self.rng.normal(p['I_bg'], p['noise'], n).astype(np.float32)
-        a, b = self.regions['sens_L']; I[a:b] += p['I_sens'] * left
-        a, b = self.regions['sens_R']; I[a:b] += p['I_sens'] * right
+        bg = p.get('I_sens_bg', 0.0)
+        a, b = self.regions['sens_L']; I[a:b] += p['I_sens'] * left + bg
+        a, b = self.regions['sens_R']; I[a:b] += p['I_sens'] * right + bg
 
         # leaky integrate-and-fire with spike-frequency adaptation
         v = self.v
@@ -179,19 +209,29 @@ class FlyBrain:
                 self._WT_neg = -self._WT.minimum(0)     # |inhibitory part|, for separate g_inh
                 self._WT_src = self.W
             s = spiked.astype(np.float32)
+            gpre = self._pre_gain()
+            if gpre is not None:
+                s *= gpre                               # transmitter-specific release (DA, OCT, ... drugs)
             g_exc, g_inh = p['g_exc'], p['g_inh']
             inp = self._WT.dot(s) * g_exc               # = g_exc*(E - I)
             if g_inh != g_exc:                          # g_exc*E - g_inh*I = g_exc*(E-I) + (g_exc-g_inh)*I
                 inp += self._WT_neg.dot(s) * (g_exc - g_inh)
             v += inp.astype(np.float32)
-        np.clip(v, -90.0, p['v_thresh'], out=v)        # keep voltages sane
+        np.clip(v, -90.0, p['v_thresh'] + 25.0, out=v) # bound below; allow overshoot above threshold so a
+                                                       # synaptically driven neuron still fires next step
 
         # motor output: ONLY motor-pool firing rates reach the body
-        a, b = self.regions['motor_L']; rate_L = float(spiked[a:b].mean())
-        a, b = self.regions['motor_R']; rate_R = float(spiked[a:b].mean())
-        forward = (p['forward_base'] + p['forward_gain'] * (rate_L + rate_R)) * p['motor_out']
+        rate_L, rate_R, drive = self._motor_rates(spiked)
+        forward = (p['forward_base'] + p['forward_gain'] * drive) * p['motor_out']
         turn = p['turn_gain'] * (rate_L - rate_R) * p['motor_out']
         return np.array([forward, turn], dtype=np.float32), spiked
+
+    def _motor_rates(self, spiked):
+        """(left steering rate, right steering rate, forward drive) read from this step's spikes.
+        Overridden by the FlyWire brain, which reads specific descending neurons."""
+        a, b = self.regions['motor_L']; rate_L = float(spiked[a:b].mean())
+        a, b = self.regions['motor_R']; rate_R = float(spiked[a:b].mean())
+        return rate_L, rate_R, rate_L + rate_R
 
     def rates(self, spiked):
         """Fraction of neurons that fired in each region (for displays / experiments)."""

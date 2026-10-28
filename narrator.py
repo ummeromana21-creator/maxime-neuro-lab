@@ -16,6 +16,10 @@ class Narrator:
         self.in_flight = False
         self.client, self.model, self.errors = None, None, 0
         self.source = 'local'
+        try:                                       # same .env file agent.py reads (git-ignored)
+            import agent as _a; _a.load_env()
+        except Exception:
+            pass
         key = os.environ.get('META_API_KEY', '')
         if not enabled or not key or key.startswith('your_'):
             if not quiet:

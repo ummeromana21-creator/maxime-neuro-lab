@@ -22,7 +22,7 @@ fly.py must expose:
       .sugar_x .sugar_y       floats (banana position)
       .get_sensory(x, y, angle) returns (sensory, dist)
 """
-import sys, time
+import os, sys, time
 import numpy as np
 
 try:
@@ -69,9 +69,15 @@ def closed_loop(brain, world_seed_base, label):
         print(f"   [{label}] trial {t+1}/{N_TRIALS}: {'found in %d steps' % steps_used[-1] if found else 'not found'}")
     return succ / N_TRIALS, (float(np.mean(steps_used)) if steps_used else float('nan'))
 
-print("Building brain ...")
+BRAIN = os.environ.get('BRAIN', 'random')          # BRAIN=flywire python3 check_fly.py  -> real connectome
+if BRAIN == 'flywire':
+    import flywire_brain
+    make_brain = lambda seed: flywire_brain.FlyWireBrain(seed=seed)
+else:
+    make_brain = lambda seed: fly.FlyBrain(seed=seed)
+print(f"Building brain ({BRAIN}) ...")
 t0 = time.time()
-brain = fly.FlyBrain(seed=0)
+brain = make_brain(0)
 print(f"   built in {time.time()-t0:.1f}s, n={brain.n}, synapses={brain.W.nnz}")
 world, body = fly.World(seed=0), fly.FlyBody()
 

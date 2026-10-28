@@ -9,11 +9,18 @@ change is stated as a new hypothesis.
 
 Scope and limits, stated up front:
 
-* The brain is a 139,255-neuron leaky integrate-and-fire network with **random, lateralised
-  wiring**. It is FlyWire-*scale*, not the FlyWire connectome. There are no real brain
-  regions, no neuromodulators (dopamine, octopamine, serotonin), no ventral nerve cord,
-  no peripheral nervous system. Drugs act on network parameters (`brain.params`), never on
-  behaviour directly. See `pharmacology.py` for the mechanism table.
+* Maxime has two possible brains, and every result says which one it used.
+  **FlyWire** (`server.py`, the default): the real FlyWire v783 connectome (Dorkenwald et al.
+  2024, *Nature*; Schlegel et al. 2024, *Nature*): 139,255 neurons, 3.73 M connections,
+  50.7 M synapses, signed by each neuron's predicted transmitter (Eckstein et al. 2024) with
+  the Shiu et al. 2024 (*Nature*) convention (ACh/DA/5-HT/OA excitatory, GABA/Glu inhibitory),
+  with leaky integrate-and-fire dynamics. Smell enters through the banana-glomerulus ORNs,
+  the legs listen to the descending neurons; there is no ventral nerve cord (the body
+  integrates the descending command directly).
+  **Random** (`--brain random`): same neuron count, random lateralised wiring, no real
+  regions and no transmitter identities. Kept as the fast fallback and as a control.
+  In both, drugs act on network parameters (`brain.params`), never on behaviour directly
+  (`pharmacology.py`, `substances.py`).
 * Simulation steps are not milliseconds and dose units are not milligrams. Only the
   **shape** of a result can be compared with the literature: direction, monotonic vs
   biphasic, reversible vs not, ordering of effects. Never absolute numbers.
@@ -120,10 +127,88 @@ trial), `firing_all` and `firing[region]` (fraction of neurons spiking per step)
   curve.** This is the expected mismatch; it motivates the second hypothesis above.
   Full 400-step sweep with finer low doses (0.05–0.25): pending (agent).
 
+## P7 — Does the real wiring steer Maxime toward the banana? (negative result, recorded)
+
+* **Question:** with the FlyWire connectome, ORN → ... → descending neurons, does a left/right
+  smell difference at the antennae reach the legs?
+* **Prediction:** it should at least reach the lateral horn with a measurable left/right bias
+  (Gaudry et al. 2013, *Nature*: ipsilateral ORN release is ~30-40 % stronger, giving PNs a
+  bilateral comparison), even if a full walk-to-the-banana needs wind and the central complex.
+* **Result (`python3 stage_map.py`, 300 steps per side, seed 1, 2026-10-28):** lateralisation
+  index LI = (rate on the banana side − far side) / (sum), averaged over banana-left and
+  banana-right:
+
+  | stage | neurons L/R | LI |
+  |---|---|---|
+  | banana ORNs (DM1/DM2/DM3/DM4/VM2/VA2) | 169/158 | **+0.58** |
+  | PNs of those glomeruli | 10/10 | +0.04 |
+  | all uniglomerular olfactory PNs | 129/130 | +0.01 |
+  | lateral horn (LH*) | 620/607 | +0.01 |
+  | mushroom-body Kenyon cells | 2580/2597 | +0.01 |
+  | MBONs | 48/48 | +0.01 |
+  | LAL | 280/275 | +0.01 |
+  | central complex (EPG/PEN/PFL/FC/Δ/ER) | 660/655 | −0.01 |
+  | descending neurons | 647/650 | −0.01 |
+
+  **The signal dies at the first synapse.** The banana-glomerulus PNs fire at ~22 % on *both*
+  sides whatever side the banana is on: they are saturated, and they receive ORN input from
+  both antennae (bilateral ORN projection; the 1.3 : 0.7 ipsilateral bias is not enough once
+  the PN is at ceiling). Nothing downstream can recover a difference the PNs no longer carry.
+  `check_fly.py` with `BRAIN=flywire` therefore **fails its steering test**, and the lab says so
+  in its hello (`wiring: FlyWire v783`). Earlier fixes that were tried and did not change this:
+  input-budget normalisation of every neuron's synapses (kept, 300 synapses), compressive
+  rather than divisive scaling, the ipsilateral ORN bias, and choosing steering neurons among
+  the descending neurons by their side preference (no held-out generalisation).
+* **What it means / next hypotheses (not yet done, stated here first):** (1) PN gain control:
+  real PNs adapt strongly and are normalised by GABAergic antennal-lobe local neurons
+  (Olsen & Wilson 2008, *Nature*); in the model the LNs exist but are as saturated as the PNs.
+  A PN/LN-specific refractory period or adaptation is the first thing to test.
+  (2) Odour navigation in walking flies is wind-guided (Álvarez-Salvado et al. 2018, *eLife*):
+  antennal wind sensing through the Johnston's organ and the central complex, which the
+  arena does not provide. A wind field plus JO input is the proper experiment.
+  Until one of these is done, every FlyWire result in the notebook is about the *brain's*
+  response (firing by region, transmitter class, drug effects — all of which work and pass
+  `check_drugs.py`), not about finding bananas.
+
+## The substance library (`substances.py`)
+
+Beyond the seven classic drugs, the lab knows repellents (DEET, picaridin, citronellal, PMD),
+a pyrethroid insecticide (permethrin and its relatives), transporter drugs (amphetamine,
+bupropion, cocaine) and two things it cannot dose (sugar, salt — taste is not modelled, and
+the library says so instead of pretending). Each entry states its mechanism on Maxime's
+handles, a confidence label (*established in Drosophila* / *insect evidence* / *inferred* /
+*not testable yet*), the papers it rests on, and what is *not* modelled. Two new handles
+made this possible: per-transmitter release gains (`g_DA`, `g_OCT`, `g_ACH`, …, using FlyWire's
+transmitter prediction for each neuron — 584 dopaminergic, 72 octopaminergic neurons) and
+an odour-independent drive into the smell receptor neurons (`I_sens_bg`, for chemicals that
+excite ORNs regardless of odour). `check_drugs.py` TEST 8–10 verify that every entry changes
+exactly the handles it declares, that washout undoes it, that DEET cuts receptor-neuron
+firing, and that amphetamine moves network firing on the FlyWire brain (and does nothing on
+the random brain, which has no dopamine neurons — the referee says so).
+
+Pre-registered expectations for the library, to be run as notebook experiments:
+
+* **DEET** should reduce bananas found and receptor firing (`firing.sens_*`), with the brain's
+  overall firing nearly unchanged. Real flies: DEET makes attractive odours less attractive
+  (Ditzen et al. 2008).
+* **Citronellal / PMD** should *raise* receptor-neuron firing while bananas found falls: the
+  banana is drowned out rather than hidden. (The aversion itself is not modelled.)
+* **Permethrin** should raise firing and activity at low dose and silence the fly at high
+  dose (depolarising block) — the classic pyrethroid knock-down shape.
+* **Amphetamine / cocaine / bupropion** change firing through dopamine neurons only on the
+  FlyWire brain. Direction of the *behavioural* change is not predicted here: with the
+  steering problem of P7 unsolved, only firing-based measures count for these.
+* **Sugar, salt:** the lab must refuse to dose them and explain why.
+
 ---
 
 Reference list to verify before submission (do not cite from memory in the write-up):
 Sweeney et al. 1995 *Neuron* (tetanus toxin light chain in *Drosophila*); Shaw et al. 2000
 *Science* and Hendricks et al. 2000 *Neuron* (fly sleep, caffeine); Wolf et al. 2002
 *J Neurosci* (ethanol biphasic locomotion); Parr et al. 2001 (ethanol locomotor assay);
-Dorkenwald et al. 2024 *Nature* (FlyWire connectome, for the neuron count only).
+Dorkenwald et al. 2024 *Nature* and Schlegel et al. 2024 *Nature* (FlyWire connectome and
+annotations); Eckstein et al. 2024 *Cell* (transmitter prediction); Shiu et al. 2024 *Nature*
+(leaky integrate-and-fire model of the whole connectome); Gaudry et al. 2013 *Nature*
+(bilateral olfactory comparison); Olsen & Wilson 2008 *Nature* (antennal-lobe gain control);
+Álvarez-Salvado et al. 2018 *eLife* (wind-guided odour navigation); and the citations listed
+per entry in `substances.py`.

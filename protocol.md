@@ -101,6 +101,21 @@ Every command is an object with `"cmd"` and an optional `"id"` (echoed in the `a
 | `pause` / `resume` | — | freeze / unfreeze the simulation |
 | `log` | `text`, `source` | broadcast a line to all clients |
 | `ping` | — | ack |
+| `propose_experiment` | `card` | validate a card (below); ack `data` = `{id, card, steps}`; broadcasts `proposal` |
+| `run_experiment` | `exp` | run a proposed or past experiment (a past one becomes a re-run with `rerun_of`); live progress in `state.experiment`; `experiment_started`, one `experiment_run` per run, then `experiment_done` with the record and the notebook list |
+| `discard_proposal` | `exp` | drop a proposal; broadcasts `proposal_discarded` |
+| `cancel_experiment` | — | stop the running experiment; broadcasts `experiment_cancelled` |
+| `get_experiment` | `exp` | ack `data` = `{record, markdown, steps}` |
+| `list_notebook` | — | ack `data` = `{notebook}` (one summary per experiment) |
+| `lookup` | `name`, `offline` (optional) | what the lab knows about a substance (`match`: library entry with mechanism, confidence, evidence, `testable`, `dose_as`) plus `sources` from PubChem and Wikipedia when online; runs off the simulation thread |
+
+An experiment **card**: `title`, `hypothesis`, `description`, `control {name, setup}`,
+`treatments [{name, setup}]` (1–6), `measure` (one of `hello.measures`), `prediction`
+(`higher` / `lower` / `different`), `repeats` (3–10), `steps` (100–2000), optional `variables`,
+`constraints`, `author`. A `setup` is a list of the verbs `restore`, `dose`, `washout`,
+`set_param`, `scramble`. The lab resets Maxime (`restore` + `reset_fly`) before every run, applies
+the condition's setup, lets her settle 30 steps, then measures `steps` steps. The verdict rule
+is in `experiments.py` (`analyse`) and in the README.
 
 Rules the server enforces: a drug or `set_param` only ever changes `brain.params`; nothing
 can set the fly's position, heading or spikes directly (there is deliberately no such

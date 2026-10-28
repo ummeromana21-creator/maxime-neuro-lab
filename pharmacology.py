@@ -34,6 +34,7 @@ def hill(c, ec50, n=2.0, emax=1.0):
 # An effect is (param, kind, function_of_concentration):
 #     kind 'mult' -> param = baseline * f(c)      (several drugs multiply together)
 #     kind 'set'  -> param = max(current, f(c))   (used for ttx_frac)
+#     kind 'add'  -> param = current + f(c)         (used for odour-independent sensory drive)
 # ---------------------------------------------------------------------------------------
 DRUGS = {
     'picrotoxin': dict(
@@ -139,6 +140,8 @@ class Pharmacology:
                     p[key] = p[key] * val
                 elif kind == 'set':
                     p[key] = max(p[key], val)
+                elif kind == 'add':
+                    p[key] = p[key] + val
         self.brain.params.update(p)
 
     def state(self):
@@ -207,3 +210,14 @@ def run_trial(brain, body, world, pharm=None, steps=400, catch_radius=0.9, rng=N
         body.move(motor)
         meter.update(spiked, motor, body, prev, caught_now)
     return meter.result(brain, pharm)
+
+
+# ---------------------------------------------------------------------------------------
+# The substance library (repellents, insecticides, stimulants...) lives in substances.py with its
+# evidence and confidence labels; entries that have a mechanism on Maxime's handles are drugs too.
+# ---------------------------------------------------------------------------------------
+try:
+    import substances as _subst
+    DRUGS.update(_subst.drug_entries())
+except ImportError:
+    pass
