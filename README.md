@@ -78,3 +78,4 @@ report says so). `fake_server.py` serves the lab with a scripted fly for UI work
 
 Everything in this folder. Tools used to write the code are listed in the submission;
 Meta's models run *inside* the product as described above.
+# maxime-neuro-lab
